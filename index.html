@@ -48,7 +48,14 @@
     background: #666; transition: background .3s;
   }
   #dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  #dot.off { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  #dot.off { background: var(--dim); }
+  .hidden { display: none !important; }
+  a.ctl {
+    color: var(--accent); text-decoration: none;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 13px;
+  }
+  a.ctl:hover { border-color: var(--accent); }
 
   .counters { display: flex; gap: 14px; font-size: 13px; color: var(--dim); margin-left: auto; }
   .counters b { color: var(--text); font-size: 15px; }
@@ -123,7 +130,6 @@
   <header>
     <h1>PERSEID <span>LIVE WATCH</span></h1>
     <div class="status"><span id="dot"></span><span id="statusText">connecting…</span></div>
-    <div id="diag" class="hidden"></div>
     <div class="counters">
       <span>Tonight <b id="tonight">0</b></span>
       <span>All-time <b id="alltime">0</b></span>
@@ -132,6 +138,7 @@
       <button id="soundBtn" title="toggle chime">Sound: ON</button>
       <button id="manualBtn" title="you saw one in the stream">I saw one</button>
       <button id="testBtn" title="inject a fake meteor through the bridge">Test</button>
+      <a class="ctl" id="ctlLink" href="http://127.0.0.1:8765/" target="_blank">Open control room</a>
     </div>
   </header>
 
@@ -166,11 +173,10 @@
   // --- elements -------------------------------------------------------
   const $ = (id) => document.getElementById(id);
   const dot = $("dot"), statusText = $("statusText");
-  const diagEl = $("diag");
   const tonightEl = $("tonight"), alltimeEl = $("alltime");
   const flash = $("flash"), logEl = $("log");
   const soundBtn = $("soundBtn"), manualBtn = $("manualBtn");
-  const testBtn = $("testBtn");
+  const testBtn = $("testBtn"), ctlLink = $("ctlLink");
 
   // --- persistence ----------------------------------------------------
   const store = {
@@ -264,21 +270,31 @@
   const sameOrigin =
     location.protocol === "http:" &&
     (location.hostname === "127.0.0.1" || location.hostname === "localhost");
+  if (sameOrigin) ctlLink.classList.add("hidden");
   const wsHost = sameOrigin ? location.hostname : "127.0.0.1";
   const wsUrl = `ws://${wsHost}:${port}`;
 
-  function setStatus(state, label, detail) {
+  // If this is the github.io page on a Mac with the detector running,
+  // hop over to the local page (no browser restrictions there).
+  if (!sameOrigin) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 600);
+    fetch(`http://127.0.0.1:${port}/health`, { signal: ctl.signal })
+      .then((r) => { if (r.ok) location.replace(`http://127.0.0.1:${port}/`); })
+      .catch(() => {})
+      .finally(() => clearTimeout(t));
+  }
+
+  function setStatus(state, label) {
     dot.className = state;
     statusText.textContent = label;
-    diagEl.textContent = detail || "";
-    diagEl.classList.toggle("hidden", !detail);
   }
   function connect() {
     let ws0;
     try {
       ws0 = new WebSocket(wsUrl);
     } catch (e) {
-      setStatus("off", "detector offline", "blocked: " + e.message);
+      setStatus("off", "remote view");
       scheduleReconnect();
       return;
     }
@@ -298,20 +314,13 @@
         onMeteor(msg);
       }
     };
-    ws.onclose = (e) => {
-      const code = e && e.code ? " (code " + e.code + ")" : "";
-      let detail = "";
-      if (code.includes("1006")) {
-        detail = sameOrigin
-          ? "bridge not reachable — is the detector running? (launchctl list | grep perseid)"
-          : "browser refused ws://localhost from this https page — open http://127.0.0.1:8765 instead";
-      }
-      setStatus("off", "detector offline" + code, detail);
+    ws.onclose = () => {
+      setStatus("off", sameOrigin ? "reconnecting…" : "remote view");
       if (retry < 15000) retry = Math.min(retry * 2, 15000);
       scheduleReconnect();
     };
-    ws.onerror = (e) => {
-      setStatus("off", "detector offline", "connection error");
+    ws.onerror = () => {
+      setStatus("off", sameOrigin ? "reconnecting…" : "remote view");
     };
   }
   function scheduleReconnect() { setTimeout(connect, retry); }

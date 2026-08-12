@@ -247,6 +247,15 @@ class EventBridge:
                 "Access-Control-Max-Age: 86400\r\n"
                 "Connection: close\r\n\r\n").encode())
             raise OSError("preflight answered")
+        if method == "GET" and path == "/health":
+            body = b'{"ok": true}'
+            conn.sendall((
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Connection: close\r\n\r\n").encode() + body)
+            raise OSError("health answered")
         if method == "GET" and path == "/" and "sec-websocket-key" not in head.lower() and \
                 "sec-websocket-key:" not in buf.decode("latin1").lower():
             # Serve the watch page locally so http://127.0.0.1:PORT works
@@ -450,8 +459,10 @@ class Detector:
         t = self.tracker
         if t is None:
             return
+        w, h = t.box[2], t.box[3]
+        elongated = max(w, h) >= 2.5 * max(1, min(w, h))
         if (t.life >= self.min_frames and t.max_area >= self.min_area
-                and t.life <= MAX_TRACK_FRAMES):
+                and t.life <= MAX_TRACK_FRAMES and elongated):
             out["events"].append({
                 "box": t.box,
                 "area": t.max_area,
@@ -560,13 +571,23 @@ def main():
                     time.sleep(retry_delay)
         elif args.pick:
             frame = np.array(sct.grab(monitor))[:, :, :3][:, :, ::-1]
-            cv2.imshow("Drag to select region, press ENTER (ESC = cancel)", frame)
-            r = cv2.selectROI("Drag to select region, press ENTER (ESC = cancel)", frame,
+            cv2.imshow("Drag a box around the video, press ENTER (ESC = cancel)", frame)
+            r = cv2.selectROI("Drag a box around the video, press ENTER (ESC = cancel)", frame,
                               showCrosshair=True)
             cv2.destroyAllWindows()
             if r[2] > 20 and r[3] > 20:
                 region = {"left": monitor["left"] + r[0], "top": monitor["top"] + r[1],
                           "width": r[2], "height": r[3]}
+                region = clip_region(region, monitor)
+                config_path.write_text(json.dumps({"region": region}, indent=2))
+                print(f"[pick] saved region {region['width']}x{region['height']} at "
+                      f"({region['left']},{region['top']}) -> {config_path}")
+                print("[pick] restart the auto-start detector:")
+                print("  launchctl bootout gui/$(id -u)/com.perseid.detector")
+                print("  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.perseid.detector.plist")
+            else:
+                print("[pick] cancelled — no change made")
+            return
         elif config_path.exists():
             try:
                 saved = json.loads(config_path.read_text())
