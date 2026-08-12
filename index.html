@@ -98,19 +98,6 @@
     100% { transform: scale(1.15); opacity: 0; }
   }
 
-  #offline {
-    position: absolute; inset: 0;
-    display: flex; flex-direction: column; gap: 8px;
-    align-items: center; justify-content: center;
-    text-align: center;
-    color: var(--dim); font-size: 14px;
-    background: rgba(5, 7, 13, .92);
-  }
-  #offline code {
-    background: #121a33; border: 1px solid var(--border);
-    padding: 8px 14px; border-radius: 8px; color: var(--accent);
-    font-size: 13px;
-  }
   .hidden { display: none !important; }
 
   footer {
@@ -150,11 +137,6 @@
         allowfullscreen></iframe>
       <div id="overlay"></div>
       <div id="flash"><div id="flashText">METEOR!</div></div>
-      <div id="offline" class="hidden">
-        <div><b>Detector offline</b></div>
-        <div>Start it on your Mac so meteors trigger here:</div>
-        <code>.venv/bin/python perseid_detector.py --no-window --bridge-port 8765</code>
-      </div>
     </div>
   </main>
 
@@ -178,7 +160,7 @@
   const $ = (id) => document.getElementById(id);
   const dot = $("dot"), statusText = $("statusText");
   const tonightEl = $("tonight"), alltimeEl = $("alltime");
-  const flash = $("flash"), offline = $("offline"), logEl = $("log");
+  const flash = $("flash"), logEl = $("log");
   const soundBtn = $("soundBtn"), manualBtn = $("manualBtn");
 
   // --- persistence ----------------------------------------------------
@@ -269,7 +251,7 @@
   });
 
   // --- websocket bridge ----------------------------------------------
-  let ws = null, retry = 1000, everConnected = false;
+  let ws = null, retry = 1000;
   function setStatus(state, label) {
     dot.className = state;
     statusText.textContent = label;
@@ -279,7 +261,6 @@
       ws = new WebSocket(`ws://127.0.0.1:${port}`);
     } catch (e) { scheduleReconnect(); return; }
     ws.onopen = () => {
-      everConnected = true;
       retry = 1000;
       setStatus("on", "detector connected");
     };
@@ -295,13 +276,8 @@
       }
     };
     ws.onclose = () => {
-      setStatus("off", "detector offline — retrying…");
-      if (everConnected) {
-        offline.classList.add("hidden");
-        if (retry < 15000) retry = Math.min(retry * 2, 15000);
-      } else {
-        offline.classList.remove("hidden");
-      }
+      setStatus("off", "detector offline");
+      if (retry < 15000) retry = Math.min(retry * 2, 15000);
       scheduleReconnect();
     };
     ws.onerror = () => { try { ws.close(); } catch (_) {} };

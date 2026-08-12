@@ -20,6 +20,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -480,7 +481,16 @@ def main():
             x, y, w, h = map(int, args.region.split(","))
             region = {"left": x, "top": y, "width": w, "height": h}
         elif args.window:
-            region = find_window_region(args.window)
+            retry_delay = float(os.environ.get("PERSEID_WINDOW_RETRY", "30"))
+            while True:
+                try:
+                    region = find_window_region(args.window)
+                    break
+                except SystemExit as e:
+                    if retry_delay <= 0:
+                        raise
+                    print(f"[init] {e} — retrying in {retry_delay:.0f}s…", file=sys.stderr)
+                    time.sleep(retry_delay)
         elif args.pick:
             frame = np.array(sct.grab(monitor))[:, :, :3][:, :, ::-1]
             cv2.imshow("Drag to select region, press ENTER (ESC = cancel)", frame)
