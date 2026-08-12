@@ -1,0 +1,5 @@
+opencv-python>=4.8
+numpy
+mss
+sounddevice
+pyobjc-framework-Quartz

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Perseid Live Watch</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: rgba(20, 28, 52, 0.85);
+    --border: #243054;
+    --text: #dfe6ff;
+    --dim: #8fa0c9;
+    --accent: #58c4ff;
+    --danger: #ff4d5e;
+    --ok: #3ddc97;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 1px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+
+  .status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--dim); }
+  #dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #666; transition: background .3s;
+  }
+  #dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  #dot.off { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+  .counters { display: flex; gap: 14px; font-size: 13px; color: var(--dim); margin-left: auto; }
+  .counters b { color: var(--text); font-size: 15px; }
+
+  .controls { display: flex; gap: 8px; }
+  button {
+    background: #1a2547; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button#manualBtn { border-color: var(--danger); color: #ffc2c8; }
+
+  main { flex: 1; display: flex; min-height: 0; padding: 12px; }
+  #stage {
+    position: relative;
+    flex: 1;
+    background: #05070d;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  #feed { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+  #overlay { position: absolute; inset: 0; pointer-events: none; }
+
+  #flash {
+    position: absolute; inset: 0; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 40, 60, 0.45) 100%);
+    opacity: 0;
+  }
+  #flash.show { animation: flash 1.6s ease-out forwards; }
+  @keyframes flash {
+    0%   { opacity: 0; }
+    12%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  #flashText {
+    font-size: clamp(40px, 9vw, 110px);
+    font-weight: 800;
+    letter-spacing: 6px;
+    color: #ff2b40;
+    text-shadow: 0 0 24px rgba(255, 40, 60, .9), 0 0 60px rgba(255, 40, 60, .5);
+    transform: scale(.3);
+  }
+  #flash.show #flashText { animation: boom 1.6s ease-out forwards; }
+  @keyframes boom {
+    0%   { transform: scale(.3); opacity: 0; }
+    18%  { transform: scale(1.05); opacity: 1; }
+    60%  { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1.15); opacity: 0; }
+  }
+
+  #offline {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; gap: 8px;
+    align-items: center; justify-content: center;
+    text-align: center;
+    color: var(--dim); font-size: 14px;
+    background: rgba(5, 7, 13, .92);
+  }
+  #offline code {
+    background: #121a33; border: 1px solid var(--border);
+    padding: 8px 14px; border-radius: 8px; color: var(--accent);
+    font-size: 13px;
+  }
+  .hidden { display: none !important; }
+
+  footer {
+    display: flex; gap: 16px; padding: 8px 16px 12px;
+    background: var(--panel); border-top: 1px solid var(--border);
+  }
+  #log {
+    flex: 1; margin: 0; padding: 0; list-style: none;
+    max-height: 120px; overflow-y: auto;
+    font: 12px/1.6 ui-monospace, Menlo, monospace; color: var(--dim);
+  }
+  #log li { padding: 2px 0; border-bottom: 1px dashed #1b2440; }
+  #log li b { color: var(--danger); }
+  #log li .t { color: var(--accent); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>PERSEID <span>LIVE WATCH</span></h1>
+    <div class="status"><span id="dot"></span><span id="statusText">connecting…</span></div>
+    <div class="counters">
+      <span>Tonight <b id="tonight">0</b></span>
+      <span>All-time <b id="alltime">0</b></span>
+    </div>
+    <div class="controls">
+      <button id="soundBtn" title="toggle chime">Sound: ON</button>
+      <button id="manualBtn" title="you saw one in the stream">I saw one</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="stage">
+      <iframe id="feed"
+        title="Telescope live stream"
+        src=""
+        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+        allowfullscreen></iframe>
+      <div id="overlay"></div>
+      <div id="flash"><div id="flashText">METEOR!</div></div>
+      <div id="offline" class="hidden">
+        <div><b>Detector offline</b></div>
+        <div>Start it on your Mac so meteors trigger here:</div>
+        <code>.venv/bin/python perseid_detector.py --no-window --bridge-port 8765</code>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <ul id="log"></ul>
+  </footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // --- config ---------------------------------------------------------
+  const DEFAULT_VIDEO_ID = "cwg4SWznVaY";
+  const DEFAULT_PORT = 8765;
+
+  const params = new URLSearchParams(location.search);
+  const videoId = params.get("v") || DEFAULT_VIDEO_ID;
+  const port = parseInt(params.get("port") || DEFAULT_PORT, 10);
+
+  // --- elements -------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const dot = $("dot"), statusText = $("statusText");
+  const tonightEl = $("tonight"), alltimeEl = $("alltime");
+  const flash = $("flash"), offline = $("offline"), logEl = $("log");
+  const soundBtn = $("soundBtn"), manualBtn = $("manualBtn");
+
+  // --- persistence ----------------------------------------------------
+  const store = {
+    get alltime() { return parseInt(localStorage.getItem("perseid.alltime") || "0", 10); },
+    set alltime(v) { localStorage.setItem("perseid.alltime", String(v)); },
+    get tonight() {
+      const d = localStorage.getItem("perseid.tonight.date");
+      const today = new Date().toISOString().slice(0, 10);
+      if (d !== today) { localStorage.setItem("perseid.tonight.date", today); return 0; }
+      return parseInt(localStorage.getItem("perseid.tonight.count") || "0", 10);
+    },
+    set tonight(v) {
+      localStorage.setItem("perseid.tonight.date", new Date().toISOString().slice(0, 10));
+      localStorage.setItem("perseid.tonight.count", String(v));
+    },
+  };
+  let tonight = store.tonight, alltime = store.alltime;
+  function renderCounters() {
+    tonightEl.textContent = tonight;
+    alltimeEl.textContent = alltime;
+  }
+  renderCounters();
+
+  // --- chime (WebAudio, mirrors the local detector's sound) -----------
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  }
+  let soundOn = localStorage.getItem("perseid.sound") !== "off";
+  function playChime() {
+    if (!soundOn || !audioCtx) return;
+    const sr = audioCtx.sampleRate;
+    const dur = 0.55;
+    const n = Math.floor(sr * dur);
+    const buf = audioCtx.createBuffer(1, n, sr);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const env = Math.exp(-t * 5.5);
+      ch[i] = (Math.sin(2 * Math.PI * 880 * t) + 0.55 * Math.sin(2 * Math.PI * 1320 * t)) * env * 0.85;
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start();
+  }
+
+  // --- meteor visuals -------------------------------------------------
+  function flashMeteor() {
+    flash.classList.remove("show");
+    void flash.offsetWidth; // restart animation
+    flash.classList.add("show");
+  }
+
+  function addLog(ev) {
+    const t = (ev.ts ? ev.ts.slice(11, 19) : new Date().toTimeString().slice(0, 8));
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="t">${t}</span>  <b>METEOR</b>` +
+      (ev.area ? `  area=${ev.area}` : "") +
+      (ev.duration_frames ? `  life=${ev.duration_frames}f` : "");
+    logEl.prepend(li);
+    while (logEl.children.length > 50) logEl.lastChild.remove();
+  }
+
+  function onMeteor(ev) {
+    tonight += 1; alltime += 1;
+    store.tonight = tonight; store.alltime = alltime;
+    renderCounters();
+    playChime();
+    flashMeteor();
+    addLog(ev);
+  }
+
+  document.addEventListener("pointerdown", ensureAudio, { once: true });
+  manualBtn.addEventListener("click", () => {
+    ensureAudio();
+    onMeteor({ ts: new Date().toISOString(), manual: true });
+  });
+  soundBtn.addEventListener("click", () => {
+    soundOn = !soundOn;
+    localStorage.setItem("perseid.sound", soundOn ? "on" : "off");
+    soundBtn.textContent = "Sound: " + (soundOn ? "ON" : "OFF");
+  });
+
+  // --- websocket bridge ----------------------------------------------
+  let ws = null, retry = 1000, everConnected = false;
+  function setStatus(state, label) {
+    dot.className = state;
+    statusText.textContent = label;
+  }
+  function connect() {
+    try {
+      ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    } catch (e) { scheduleReconnect(); return; }
+    ws.onopen = () => {
+      everConnected = true;
+      retry = 1000;
+      setStatus("on", "detector connected");
+    };
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (_) { return; }
+      if (msg.type === "hello") {
+        tonight = store.tonight = Math.max(msg.tonight || 0, tonight);
+        alltime = store.alltime = Math.max(msg.all_time || 0, alltime);
+        renderCounters();
+      } else if (msg.type === "meteor") {
+        onMeteor(msg);
+      }
+    };
+    ws.onclose = () => {
+      setStatus("off", "detector offline — retrying…");
+      if (everConnected) {
+        offline.classList.add("hidden");
+        if (retry < 15000) retry = Math.min(retry * 2, 15000);
+      } else {
+        offline.classList.remove("hidden");
+      }
+      scheduleReconnect();
+    };
+    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  }
+  function scheduleReconnect() { setTimeout(connect, retry); }
+
+  // --- iframe ---------------------------------------------------------
+  $("feed").src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&rel=0&modestbranding=1`;
+
+  connect();
+})();
+</script>
+</body>
+</html>
