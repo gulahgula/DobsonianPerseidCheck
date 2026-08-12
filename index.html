@@ -38,6 +38,11 @@
   header h1 span { color: var(--accent); }
 
   .status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--dim); }
+  #diag {
+    font-size: 12px; color: var(--accent);
+    background: rgba(20, 28, 52, .8); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; max-width: 420px;
+  }
   #dot {
     width: 10px; height: 10px; border-radius: 50%;
     background: #666; transition: background .3s;
@@ -118,6 +123,7 @@
   <header>
     <h1>PERSEID <span>LIVE WATCH</span></h1>
     <div class="status"><span id="dot"></span><span id="statusText">connecting…</span></div>
+    <div id="diag" class="hidden"></div>
     <div class="counters">
       <span>Tonight <b id="tonight">0</b></span>
       <span>All-time <b id="alltime">0</b></span>
@@ -125,6 +131,7 @@
     <div class="controls">
       <button id="soundBtn" title="toggle chime">Sound: ON</button>
       <button id="manualBtn" title="you saw one in the stream">I saw one</button>
+      <button id="testBtn" title="inject a fake meteor through the bridge">Test</button>
     </div>
   </header>
 
@@ -159,9 +166,11 @@
   // --- elements -------------------------------------------------------
   const $ = (id) => document.getElementById(id);
   const dot = $("dot"), statusText = $("statusText");
+  const diagEl = $("diag");
   const tonightEl = $("tonight"), alltimeEl = $("alltime");
   const flash = $("flash"), logEl = $("log");
   const soundBtn = $("soundBtn"), manualBtn = $("manualBtn");
+  const testBtn = $("testBtn");
 
   // --- persistence ----------------------------------------------------
   const store = {
@@ -252,14 +261,28 @@
 
   // --- websocket bridge ----------------------------------------------
   let ws = null, retry = 1000;
-  function setStatus(state, label) {
+  const sameOrigin =
+    location.protocol === "http:" &&
+    (location.hostname === "127.0.0.1" || location.hostname === "localhost");
+  const wsHost = sameOrigin ? location.hostname : "127.0.0.1";
+  const wsUrl = `ws://${wsHost}:${port}`;
+
+  function setStatus(state, label, detail) {
     dot.className = state;
     statusText.textContent = label;
+    diagEl.textContent = detail || "";
+    diagEl.classList.toggle("hidden", !detail);
   }
   function connect() {
+    let ws0;
     try {
-      ws = new WebSocket(`ws://127.0.0.1:${port}`);
-    } catch (e) { scheduleReconnect(); return; }
+      ws0 = new WebSocket(wsUrl);
+    } catch (e) {
+      setStatus("off", "detector offline", "blocked: " + e.message);
+      scheduleReconnect();
+      return;
+    }
+    ws = ws0;
     ws.onopen = () => {
       retry = 1000;
       setStatus("on", "detector connected");
@@ -275,14 +298,32 @@
         onMeteor(msg);
       }
     };
-    ws.onclose = () => {
-      setStatus("off", "detector offline");
+    ws.onclose = (e) => {
+      const code = e && e.code ? " (code " + e.code + ")" : "";
+      let detail = "";
+      if (code.includes("1006")) {
+        detail = "browser refused ws://localhost — open http://127.0.0.1:8765 instead (same page, no restrictions)";
+      }
+      setStatus("off", "detector offline" + code, detail);
       if (retry < 15000) retry = Math.min(retry * 2, 15000);
       scheduleReconnect();
     };
-    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+    ws.onerror = (e) => {
+      setStatus("off", "detector offline", "connection error");
+    };
   }
   function scheduleReconnect() { setTimeout(connect, retry); }
+
+  testBtn.addEventListener("click", () => {
+    ensureAudio();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ cmd: "test" }));
+      testBtn.textContent = "Test fired";
+      setTimeout(() => { testBtn.textContent = "Test"; }, 1500);
+    } else {
+      setStatus("off", "detector offline", "can't test — not connected");
+    }
+  });
 
   // --- iframe ---------------------------------------------------------
   $("feed").src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&rel=0&modestbranding=1`;

@@ -115,6 +115,7 @@ class EventBridge:
     events to a browser page (the GitHub Pages watch page) in real time."""
 
     GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    _PAGE = None
 
     def __init__(self, port, hello=None):
         self.port = port
@@ -123,6 +124,12 @@ class EventBridge:
         self._lock = threading.Lock()
         self._server = None
         self._thread = None
+        if EventBridge._PAGE is None:
+            page = Path(__file__).resolve().parent / "index.html"
+            try:
+                EventBridge._PAGE = page.read_bytes()
+            except OSError:
+                EventBridge._PAGE = None
 
     def start(self):
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -131,7 +138,7 @@ class EventBridge:
         self._server.listen(8)
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
-        print(f"[bridge] events at ws://127.0.0.1:{self.port}")
+        print(f"[bridge] page + events at http://127.0.0.1:{self.port}")
 
     def stop(self):
         if self._server:
@@ -187,7 +194,9 @@ class EventBridge:
                         conn.sendall(bytes([0x8A, 0x00]))
                     except OSError:
                         break
-                self._drain(conn, data)
+                payload = self._read_frame(conn, data)
+                if opcode == 0x1 and payload:
+                    self._on_message(conn, payload)
         except OSError:
             pass
         finally:
@@ -198,6 +207,22 @@ class EventBridge:
             except OSError:
                 pass
 
+    def _on_message(self, conn, payload):
+        try:
+            msg = json.loads(payload.decode("utf-8", "replace"))
+        except Exception:
+            return
+        cmd = msg.get("cmd")
+        if cmd == "test":
+            self.broadcast({
+                "type": "meteor",
+                "ts": datetime.now().isoformat(),
+                "manual": True,
+                "test": True,
+            })
+        elif cmd == "counts":
+            self._send_text(conn, json.dumps(self.hello))
+
     @staticmethod
     def _handshake(conn):
         buf = b""
@@ -207,7 +232,10 @@ class EventBridge:
                 raise OSError("no handshake")
             buf += chunk
         head, _, _ = buf.decode("latin1").partition("\r\n")
-        if head.upper().startswith("OPTIONS"):
+        parts = head.split(" ")
+        method = parts[0].upper() if parts else ""
+        path = parts[1] if len(parts) > 1 else "/"
+        if method == "OPTIONS":
             # Private Network Access preflight from a browser on an https
             # page (e.g. GitHub Pages) talking to localhost — Chrome blocks
             # the WebSocket unless this is answered.
@@ -219,6 +247,24 @@ class EventBridge:
                 "Access-Control-Max-Age: 86400\r\n"
                 "Connection: close\r\n\r\n").encode())
             raise OSError("preflight answered")
+        if method == "GET" and path == "/" and "sec-websocket-key" not in head.lower() and \
+                "sec-websocket-key:" not in buf.decode("latin1").lower():
+            # Serve the watch page locally so http://127.0.0.1:PORT works
+            # with no cross-origin restrictions at all.
+            body = EventBridge._PAGE
+            if body is None:
+                body = b"<h1>index.html not found next to perseid_detector.py</h1>"
+            conn.sendall((
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n\r\n").encode())
+            try:
+                conn.sendall(body)
+            except OSError:
+                pass
+            raise OSError("page served")
         key = None
         for line in buf.decode("latin1").split("\r\n"):
             if line.lower().startswith("sec-websocket-key:"):
@@ -234,26 +280,33 @@ class EventBridge:
             f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
 
     @staticmethod
-    def _drain(conn, first):
-        """Skip the payload of an incoming client frame (we ignore their data)."""
+    def _read_frame(conn, first):
+        """Read and unmask an incoming client frame, return its payload."""
         while len(first) < 2:
             chunk = conn.recv(1)
             if not chunk:
                 raise OSError("closed")
             first += chunk
-        b0, b1 = first[0], first[1]
+        b1 = first[1]
         ln = b1 & 0x7F
         if ln == 126:
             ln = int.from_bytes(conn.recv(2), "big")
         elif ln == 127:
             ln = int.from_bytes(conn.recv(8), "big")
+        mask = b""
         if b1 & 0x80:
-            ln += 4
-        while ln > 0:
-            chunk = conn.recv(min(ln, 4096))
+            mask = conn.recv(4)
+            if len(mask) != 4:
+                raise OSError("closed")
+        payload = b""
+        while len(payload) < ln:
+            chunk = conn.recv(min(ln - len(payload), 8192))
             if not chunk:
                 raise OSError("closed")
-            ln -= len(chunk)
+            payload += chunk
+        if mask:
+            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        return payload
 
     @staticmethod
     def _send_text(conn, text):
