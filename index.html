@@ -302,7 +302,9 @@
       const code = e && e.code ? " (code " + e.code + ")" : "";
       let detail = "";
       if (code.includes("1006")) {
-        detail = "browser refused ws://localhost — open http://127.0.0.1:8765 instead (same page, no restrictions)";
+        detail = sameOrigin
+          ? "bridge not reachable — is the detector running? (launchctl list | grep perseid)"
+          : "browser refused ws://localhost from this https page — open http://127.0.0.1:8765 instead";
       }
       setStatus("off", "detector offline" + code, detail);
       if (retry < 15000) retry = Math.min(retry * 2, 15000);
