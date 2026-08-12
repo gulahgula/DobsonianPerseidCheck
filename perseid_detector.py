@@ -206,6 +206,19 @@ class EventBridge:
             if not chunk:
                 raise OSError("no handshake")
             buf += chunk
+        head, _, _ = buf.decode("latin1").partition("\r\n")
+        if head.upper().startswith("OPTIONS"):
+            # Private Network Access preflight from a browser on an https
+            # page (e.g. GitHub Pages) talking to localhost — Chrome blocks
+            # the WebSocket unless this is answered.
+            conn.sendall((
+                "HTTP/1.1 204 No Content\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "Access-Control-Allow-Private-Network: true\r\n"
+                "Access-Control-Allow-Headers: *\r\n"
+                "Access-Control-Max-Age: 86400\r\n"
+                "Connection: close\r\n\r\n").encode())
+            raise OSError("preflight answered")
         key = None
         for line in buf.decode("latin1").split("\r\n"):
             if line.lower().startswith("sec-websocket-key:"):
@@ -217,6 +230,7 @@ class EventBridge:
             "HTTP/1.1 101 Switching Protocols\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
             f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
 
     @staticmethod
